@@ -9,7 +9,7 @@ import createTicketHandler, {
 } from '../../handlers/ticketButtons.js';
 
 export default [
-  createTicketHandler,   // matcher: "create_ticket" ET "create_ticket_N" via handler.match()
+  createTicketHandler,
   closeTicketHandler,
   claimTicketHandler,
   priorityTicketHandler,
