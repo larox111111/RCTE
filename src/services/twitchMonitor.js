@@ -51,6 +51,15 @@ async function getUserData(token, usernames) {
 export async function startTwitchMonitor(client) {
     logger.info('[Twitch] Démarrage du monitoring Twitch...');
 
+    logger.info(
+        `[Twitch] Chaînes surveillées : ${TWITCH_CHANNELS.join(', ')}`
+    );
+
+    if (TWITCH_CHANNELS.length === 0) {
+    logger.error('[Twitch] Aucune chaîne configurée dans TWITCH_CHANNELS');
+    return;
+}
+
     // Initialiser le statut de tous les streamers à offline
     for (const channel of TWITCH_CHANNELS) {
         liveStatus.set(channel, false);
