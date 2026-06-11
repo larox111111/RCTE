@@ -5,7 +5,7 @@ import { errorEmbed } from '../../utils/embeds.js';
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('support')
+        .setName('supporter')
         .setDescription('Rejoins les supporters de la RCTE !'),
 
     async execute(interaction) {
