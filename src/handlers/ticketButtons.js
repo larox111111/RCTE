@@ -21,10 +21,6 @@ import { getTicketPermissionContext } from '../utils/ticketPermissions.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Vérifie que l'interaction vient bien d'un serveur.
- * Répond automatiquement avec une erreur si ce n'est pas le cas.
- */
 async function ensureGuildContext(interaction) {
   if (interaction.inGuild()) return true;
   if (!interaction.replied && !interaction.deferred) {
@@ -41,10 +37,6 @@ async function ensureGuildContext(interaction) {
   return false;
 }
 
-/**
- * Vérifie les permissions de ticket avec un timeout.
- * Retourne { success, context } ou { success: false, error, details }.
- */
 async function checkTicketPermissionWithTimeout(
   interaction,
   client,
@@ -101,9 +93,6 @@ async function checkTicketPermissionWithTimeout(
   }
 }
 
-/**
- * Répond avec l'erreur de permission si la vérification échoue.
- */
 async function replyPermissionError(interaction, permissionCheck) {
   if (!interaction.replied && !interaction.deferred) {
     await interaction.reply({
@@ -113,19 +102,11 @@ async function replyPermissionError(interaction, permissionCheck) {
   }
 }
 
-// ─── CREATE TICKET ────────────────────────────────────────────────────────────
+// ─── CREATE TICKET (bouton) ───────────────────────────────────────────────────
 
-/**
- * Handler pour les boutons create_ticket et create_ticket_N.
- *
- * BUG CORRIGÉ : Le dispatcher doit router tous les customIds qui commencent
- * par "create_ticket" vers ce handler. La propriété `match` est utilisée
- * pour ça (voir interactionCreate.js).
- */
 const createTicketHandler = {
   name: 'create_ticket',
 
-  // Utilisé par le dispatcher pour matcher create_ticket ET create_ticket_0, create_ticket_1, etc.
   match(customId) {
     return customId === 'create_ticket' || /^create_ticket_\d+$/.test(customId);
   },
@@ -134,7 +115,6 @@ const createTicketHandler = {
     try {
       if (!(await ensureGuildContext(interaction))) return;
 
-      // Rate limit : max 3 créations par minute
       const rateLimitKey = `${interaction.user.id}:create_ticket`;
       const allowed = await checkRateLimit(rateLimitKey, 3, 60_000);
       if (!allowed) {
@@ -172,15 +152,12 @@ const createTicketHandler = {
         });
       }
 
-      // Déterminer l'index du bouton cliqué
-      // customId = "create_ticket" → index 0
-      // customId = "create_ticket_2" → index 2
       const customId = interaction.customId;
       const buttonIndex =
         customId === 'create_ticket' ? 0 : parseInt(customId.split('_').pop(), 10);
 
       const ticketButtons = config.ticketButtons || [
-        { label: config.ticketButtonLabel || 'Créer un ticket', emoji: '📩' },
+        { label: config.ticketButtonLabel || 'Créer un ticket', emoji: '📩', roleId: null },
       ];
       const ticketType = ticketButtons[buttonIndex]?.label || 'Ticket';
 
@@ -216,11 +193,6 @@ const createTicketHandler = {
 
 // ─── CREATE TICKET MODAL ──────────────────────────────────────────────────────
 
-/**
- * Handler pour les modals create_ticket_modal et create_ticket_modal_N.
- *
- * BUG CORRIGÉ : Même logique de matching partiel que pour le bouton.
- */
 const createTicketModalHandler = {
   name: 'create_ticket_modal',
 
@@ -243,7 +215,6 @@ const createTicketModalHandler = {
       const config = await getGuildConfig(client, interaction.guildId);
       const categoryId = config.ticketCategoryId || null;
 
-      // Déterminer l'index depuis le customId du modal
       const modalCustomId = interaction.customId;
       const buttonIndex =
         modalCustomId === 'create_ticket_modal'
@@ -251,9 +222,11 @@ const createTicketModalHandler = {
           : parseInt(modalCustomId.split('_').pop(), 10);
 
       const ticketButtons = config.ticketButtons || [
-        { label: config.ticketButtonLabel || 'Ticket', emoji: '📩' },
+        { label: config.ticketButtonLabel || 'Ticket', emoji: '📩', roleId: null },
       ];
       const ticketType = ticketButtons[buttonIndex]?.label || 'Ticket';
+      // ← AJOUT : récupération du roleId du bouton cliqué
+      const buttonRoleId = ticketButtons[buttonIndex]?.roleId || null;
 
       const result = await createTicket(
         interaction.guild,
@@ -262,6 +235,7 @@ const createTicketModalHandler = {
         reason,
         'none',
         ticketType,
+        buttonRoleId, // ← transmis à createTicket
       );
 
       if (result.success) {
@@ -340,11 +314,6 @@ const closeTicketHandler = {
 
 // ─── CLOSE TICKET MODAL ───────────────────────────────────────────────────────
 
-/**
- * BUG CORRIGÉ : closeTicketModalHandler était bien défini dans ce fichier
- * mais n'était pas exporté dans la version originale du document 3.
- * Il est maintenant correctement exporté en bas de ce fichier.
- */
 const closeTicketModalHandler = {
   name: 'ticket_close_modal',
 
@@ -460,10 +429,6 @@ const claimTicketHandler = {
 
 // ─── PRIORITY TICKET ──────────────────────────────────────────────────────────
 
-/**
- * BUG CORRIGÉ : La priorité vient de args[0] (passé par le dispatcher depuis
- * le customId, ex: "ticket_priority:high") et non d'une valeur fixe.
- */
 const priorityTicketHandler = {
   name: 'ticket_priority',
 
@@ -582,10 +547,6 @@ const pinTicketHandler = {
             }),
           ],
         });
-        logger.info('Ticket désépinglé', {
-          guildId: interaction.guildId,
-          channelId: channel.id,
-        });
       } else {
         const newName = `📌 ${channel.name}`;
         await channel.edit({ name: newName, position: 0 });
@@ -597,10 +558,6 @@ const pinTicketHandler = {
               color: 0x3498db,
             }),
           ],
-        });
-        logger.info('Ticket épinglé', {
-          guildId: interaction.guildId,
-          channelId: channel.id,
         });
       }
 
@@ -813,13 +770,11 @@ const deleteTicketHandler = {
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
-// Export par défaut : createTicketHandler (rétrocompatibilité)
 export default createTicketHandler;
 
-// Exports nommés : tous les autres handlers
 export {
   createTicketModalHandler,
-  closeTicketModalHandler,   // BUG CORRIGÉ : était absent dans la version originale du doc 3
+  closeTicketModalHandler,
   closeTicketHandler,
   claimTicketHandler,
   priorityTicketHandler,
