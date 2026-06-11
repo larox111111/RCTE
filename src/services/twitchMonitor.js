@@ -1,7 +1,10 @@
 import { logger } from '../utils/logger.js';
 import { EmbedBuilder } from 'discord.js';
 
-const TWITCH_CHANNELS = ['larox_vlr', 'kcso6', 'ffierflex'];
+const TWITCH_CHANNELS = process.env.TWITCH_CHANNELS
+    ?.split(',')
+    .map(channel => channel.trim())
+    .filter(Boolean) || [];
 const CHECK_INTERVAL = 60000; // Vérification toutes les 60 secondes
 
 const liveStatus = new Map();
