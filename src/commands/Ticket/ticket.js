@@ -1,329 +1,270 @@
 import { getColor } from '../../config/bot.js';
-import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
-import { createEmbed, errorEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/embeds.js';
+import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
+import { createEmbed, errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { getGuildConfig } from '../../services/guildConfig.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
-
+import { getGuildConfigKey } from '../../utils/database.js';
 import ticketConfig from './modules/ticket_dashboard.js';
+
+function buildPanelButtons(ticketButtons) {
+    const buttons = ticketButtons.map((btn, index) =>
+        new ButtonBuilder()
+            .setCustomId(`create_ticket_${index}`)
+            .setLabel(btn.label)
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji(btn.emoji || '📩')
+    );
+    return new ActionRowBuilder().addComponents(buttons);
+}
 
 export default {
     data: new SlashCommandBuilder()
         .setName("ticket")
-        .setDescription("Manages the server's ticket system.")
+        .setDescription("Gère le système de tickets du serveur.")
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
         .addSubcommand((subcommand) =>
             subcommand
                 .setName("setup")
-                .setDescription(
-                    "Sets up the ticket creation panel in a specified channel.",
-                )
+                .setDescription("Configure le panel de création de tickets.")
                 .addChannelOption((option) =>
-                    option
-.setName("panel_channel")
-                        .setDescription(
-                            "The channel where the ticket panel will be sent.",
-                        )
+                    option.setName("salon")
+                        .setDescription("Le salon où envoyer le panel de tickets.")
                         .addChannelTypes(ChannelType.GuildText)
-                        .setRequired(true),
-                )
-
+                        .setRequired(true))
                 .addStringOption((option) =>
-                    option
-                        .setName("panel_message")
-                        .setDescription(
-                            "The main message/description for the ticket panel.",
-                        )
-                        .setRequired(true),
-                )
+                    option.setName("message")
+                        .setDescription("Le message affiché sur le panel.")
+                        .setRequired(true))
                 .addStringOption((option) =>
-                    option
-                        .setName("button_label")
-                        .setDescription(
-                            "The label for the ticket creation button (default: Create Ticket)",
-                        )
-                        .setRequired(false),
-                )
+                    option.setName("premier_bouton")
+                        .setDescription("Le label du premier bouton (défaut: Créer un ticket)")
+                        .setRequired(false))
                 .addChannelOption((option) =>
-                    option
-                        .setName("category")
-                        .setDescription(
-                            "The category where new tickets will be created (optional).",
-                        )
+                    option.setName("categorie")
+                        .setDescription("La catégorie où créer les tickets.")
                         .addChannelTypes(ChannelType.GuildCategory)
-                        .setRequired(false),
-                )
+                        .setRequired(false))
                 .addChannelOption((option) =>
-                    option
-                        .setName("closed_category")
-                        .setDescription(
-                            "The category where closed tickets will be moved (optional).",
-                        )
+                    option.setName("categorie_fermee")
+                        .setDescription("La catégorie où déplacer les tickets fermés.")
                         .addChannelTypes(ChannelType.GuildCategory)
-                        .setRequired(false),
-                )
+                        .setRequired(false))
                 .addRoleOption((option) =>
-                    option
-                        .setName("staff_role")
-                        .setDescription(
-                            "The role that can access tickets (optional).",
-                        )
-                        .setRequired(false),
-                )
+                    option.setName("role_staff")
+                        .setDescription("Le rôle ayant accès aux tickets.")
+                        .setRequired(false))
                 .addIntegerOption((option) =>
-                    option
-                        .setName("max_tickets_per_user")
-                        .setDescription("Maximum number of tickets a user can create (default: 3)")
+                    option.setName("max_tickets")
+                        .setDescription("Nombre maximum de tickets par utilisateur (défaut: 3)")
                         .setMinValue(1)
                         .setMaxValue(10)
-                        .setRequired(false),
-                )
+                        .setRequired(false))
                 .addBooleanOption((option) =>
-                    option
-                        .setName("dm_on_close")
-                        .setDescription("Send DM to user when their ticket is closed (default: true)")
-                        .setRequired(false),
-                ),
-        )
+                    option.setName("dm_fermeture")
+                        .setDescription("Envoyer un DM à l'utilisateur à la fermeture du ticket (défaut: oui)")
+                        .setRequired(false)))
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName("ajouterbouton")
+                .setDescription("Ajouter un bouton au panel de tickets (max 5)")
+                .addStringOption((option) =>
+                    option.setName("label")
+                        .setDescription("Nom du bouton (ex: Recrutement Staff)")
+                        .setRequired(true))
+                .addStringOption((option) =>
+                    option.setName("emoji")
+                        .setDescription("Emoji du bouton (ex: 📋)")
+                        .setRequired(false)))
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName("supprimerbouton")
+                .setDescription("Supprimer un bouton du panel de tickets")
+                .addStringOption((option) =>
+                    option.setName("label")
+                        .setDescription("Nom du bouton à supprimer")
+                        .setRequired(true)))
         .addSubcommand((subcommand) =>
             subcommand
                 .setName("dashboard")
-                .setDescription("Open the interactive ticket system dashboard"),
-        ),
+                .setDescription("Ouvrir le tableau de bord du système de tickets")),
     category: "ticket",
 
     async execute(interaction, config, client) {
         try {
-            
             const deferred = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
-            if (!deferred) {
-                return;
-            }
+            if (!deferred) return;
 
-            if (
-                !interaction.member.permissions.has(
-                    PermissionFlagsBits.ManageChannels,
-                )
-            ) {
-                logger.warn('Ticket command permission denied', {
-                    userId: interaction.user.id,
-                    guildId: interaction.guildId,
-                    commandName: 'ticket'
-                });
+            if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
                 return await InteractionHelper.safeEditReply(interaction, {
-                    embeds: [
-                        errorEmbed(
-                            "Permission Denied",
-                            "You need the `Manage Channels` permission for this action.",
-                        ),
-                    ],
+                    embeds: [errorEmbed("Permission refusée", "Tu as besoin de la permission `Gérer les salons` pour utiliser cette commande.")],
                 });
             }
 
             const subcommand = interaction.options.getSubcommand();
 
-        if (subcommand === "dashboard") {
-            return ticketConfig.execute(interaction, config, client);
-        }
-
-        if (subcommand === "setup") {
-            const existingConfig = await getGuildConfig(client, interaction.guildId);
-            if (existingConfig?.ticketPanelChannelId) {
-                return await InteractionHelper.safeEditReply(interaction, {
-                    embeds: [
-                        errorEmbed(
-                            'Ticket System Already Active',
-                            `This server already has a ticket system set up (panel in <#${existingConfig.ticketPanelChannelId}>).\n\nOnly one ticket system is supported per server. Use \`/ticket dashboard\` to edit or update the existing setup, or select **Delete System** from the dashboard to remove it and start fresh.`,
-                        ),
-                    ],
-                });
+            if (subcommand === "dashboard") {
+                return ticketConfig.execute(interaction, config, client);
             }
 
-            const panelChannel =
-                interaction.options.getChannel("panel_channel");
-            const categoryChannel = interaction.options.getChannel("category");
-            const closedCategoryChannel = interaction.options.getChannel("closed_category");
-            const staffRole = interaction.options.getRole("staff_role");
-const panelMessage = interaction.options.getString("panel_message") || "Click the button below to create a support ticket.";
-            const buttonLabel =
-                interaction.options.getString("button_label") ||
-"Create Ticket";
-            const maxTicketsPerUser = interaction.options.getInteger("max_tickets_per_user") || 3;
-const dmOnClose = interaction.options.getBoolean("dm_on_close") !== false;
+            // ─── SETUP ────────────────────────────────────────────────────────
+            if (subcommand === "setup") {
+                const existingConfig = await getGuildConfig(client, interaction.guildId);
+                if (existingConfig?.ticketPanelChannelId) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed(
+                            'Système de tickets déjà actif',
+                            `Un système de tickets est déjà configuré dans <#${existingConfig.ticketPanelChannelId}>.\n\nUtilise \`/ticket dashboard\` pour le modifier, ou **Supprimer le système** pour recommencer.`,
+                        )],
+                    });
+                }
 
-            const setupEmbed = createEmbed({ 
-                title: "🎫 Support Tickets", 
-description: panelMessage,
-                color: getColor('info')
-            });
+                const panelChannel = interaction.options.getChannel("salon");
+                const categoryChannel = interaction.options.getChannel("categorie");
+                const closedCategoryChannel = interaction.options.getChannel("categorie_fermee");
+                const staffRole = interaction.options.getRole("role_staff");
+                const panelMessage = interaction.options.getString("message") || "Clique sur un bouton ci-dessous pour créer un ticket.";
+                const buttonLabel = interaction.options.getString("premier_bouton") || "Créer un ticket";
+                const maxTicketsPerUser = interaction.options.getInteger("max_tickets") || 3;
+                const dmOnClose = interaction.options.getBoolean("dm_fermeture") !== false;
 
-            const ticketButton = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId("create_ticket")
-.setLabel(buttonLabel)
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji("📩"),
-            );
+                const ticketButtons = [{ label: buttonLabel, emoji: '📩' }];
 
-            try {
-                await panelChannel.send({
-                    embeds: [setupEmbed],
-                    components: [ticketButton],
+                const setupEmbed = createEmbed({
+                    title: "🎫 Tickets Support",
+                    description: panelMessage,
+                    color: getColor('info')
                 });
 
-                if (client.db && interaction.guildId) {
+                const row = buildPanelButtons(ticketButtons);
+
+                try {
+                    await panelChannel.send({ embeds: [setupEmbed], components: [row] });
+
                     const currentConfig = existingConfig;
-                    currentConfig.ticketCategoryId = categoryChannel ? categoryChannel.id : null;
-                    currentConfig.ticketClosedCategoryId = closedCategoryChannel ? closedCategoryChannel.id : null;
-                    currentConfig.ticketStaffRoleId = staffRole ? staffRole.id : null;
+                    currentConfig.ticketCategoryId = categoryChannel?.id || null;
+                    currentConfig.ticketClosedCategoryId = closedCategoryChannel?.id || null;
+                    currentConfig.ticketStaffRoleId = staffRole?.id || null;
                     currentConfig.ticketPanelChannelId = panelChannel.id;
                     currentConfig.ticketPanelMessage = panelMessage;
                     currentConfig.ticketButtonLabel = buttonLabel;
+                    currentConfig.ticketButtons = ticketButtons;
                     currentConfig.maxTicketsPerUser = maxTicketsPerUser;
                     currentConfig.dmOnClose = dmOnClose;
 
-                const { getGuildConfigKey } = await import('../../utils/database.js');
-                const configKey = getGuildConfigKey(interaction.guildId);
-                await client.db.set(configKey, currentConfig);
-                logger.info('Ticket configuration saved', {
-                    guildId: interaction.guildId,
-                    categoryId: categoryChannel?.id,
-                    closedCategoryId: closedCategoryChannel?.id,
-                    staffRoleId: staffRole?.id,
-                    maxTickets: maxTicketsPerUser,
-                    dmOnClose: dmOnClose
-                });
+                    const configKey = getGuildConfigKey(interaction.guildId);
+                    await client.db.set(configKey, currentConfig);
+
+                    logger.info('Ticket configuré', { guildId: interaction.guildId });
+
+                    await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [successEmbed(
+                            "✅ Panel de tickets configuré !",
+                            `Le panel a été envoyé dans ${panelChannel}.\n\n**Max tickets/utilisateur :** ${maxTicketsPerUser}\n**DM à la fermeture :** ${dmOnClose ? 'Oui' : 'Non'}\n\nUtilise \`/ticket ajouterbouton\` pour ajouter d'autres boutons.`,
+                        )],
+                    });
+
+                } catch (error) {
+                    logger.error('Erreur setup ticket:', error);
+                    await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Échec de la configuration", "Impossible d'envoyer le panel. Vérifie mes permissions dans ce salon.")],
+                    });
+                }
             }
 
-                let successMessage = `The ticket creation panel has been sent to ${panelChannel}. `;
-                
-                if (categoryChannel) {
-                    successMessage += `New tickets will be created in the **${categoryChannel.name}** category. `;
-                } else {
-                    successMessage += 'New tickets will be created in a new "Tickets" category. ';
+            // ─── AJOUTER BOUTON ───────────────────────────────────────────────
+            if (subcommand === "ajouterbouton") {
+                const guildConfig = await getGuildConfig(client, interaction.guildId);
+
+                if (!guildConfig?.ticketPanelChannelId) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Système non configuré", "Configure d'abord le système de tickets avec `/ticket setup`.")],
+                    });
                 }
-                
-                if (closedCategoryChannel) {
-                    successMessage += `Closed tickets will be moved to **${closedCategoryChannel.name}**. `;
+
+                const label = interaction.options.getString("label").trim();
+                const emoji = interaction.options.getString("emoji")?.trim() || '📩';
+
+                const ticketButtons = guildConfig.ticketButtons || [{ label: guildConfig.ticketButtonLabel || 'Créer un ticket', emoji: '📩' }];
+
+                if (ticketButtons.length >= 5) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Limite atteinte", "Tu ne peux pas avoir plus de 5 boutons sur le panel.")],
+                    });
                 }
-                
-                if (staffRole) {
-                    successMessage += `**${staffRole.name}** role will have access to tickets. `;
+
+                if (ticketButtons.find(b => b.label.toLowerCase() === label.toLowerCase())) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Bouton déjà existant", `Un bouton avec le nom **${label}** existe déjà.`)],
+                    });
                 }
-                
-                successMessage += `\n\n**Max Tickets Per User:** ${maxTicketsPerUser}\n**DM on Close:** ${dmOnClose ? 'Enabled' : 'Disabled'}`;
+
+                ticketButtons.push({ label, emoji });
+                guildConfig.ticketButtons = ticketButtons;
+
+                const configKey = getGuildConfigKey(interaction.guildId);
+                await client.db.set(configKey, guildConfig);
+
+                // Mettre à jour le panel live
+                const panelUpdated = await updateLivePanel(client, interaction.guild, guildConfig);
+
+                logger.info(`[Ticket] Bouton ajouté: ${label} par ${interaction.user.tag}`);
 
                 await InteractionHelper.safeEditReply(interaction, {
-                    embeds: [
-                        successEmbed(
-                            "Ticket Panel Set Up",
-                            successMessage,
-                        ),
-                    ],
+                    embeds: [successEmbed(
+                        "✅ Bouton ajouté !",
+                        `Le bouton **${emoji} ${label}** a été ajouté au panel.${panelUpdated ? '\nLe panel a été mis à jour.' : '\n> Le panel n\'a pas pu être mis à jour automatiquement.'}`,
+                    )],
                 });
+            }
 
-                logger.info('Ticket panel setup completed', {
-                    userId: interaction.user.id,
-                    userTag: interaction.user.tag,
-                    guildId: interaction.guildId,
-                    panelChannelId: panelChannel.id,
-                    categoryId: categoryChannel?.id,
-                    closedCategoryId: closedCategoryChannel?.id,
-                    staffRoleId: staffRole?.id,
-                    maxTickets: maxTicketsPerUser,
-                    dmOnClose: dmOnClose,
-                    commandName: 'ticket_setup'
-                });
+            // ─── SUPPRIMER BOUTON ─────────────────────────────────────────────
+            if (subcommand === "supprimerbouton") {
+                const guildConfig = await getGuildConfig(client, interaction.guildId);
 
-                const logEmbed = createEmbed({
-                    title: "🔧 Ticket System Setup (Configuration Log)",
-                    description: `The ticket panel was set up in ${panelChannel} by ${interaction.user}.`,
-                    color: getColor('warning')
-                })
-                    .addFields(
-                        {
-                            name: "Panel Channel",
-                            value: panelChannel.toString(),
-                            inline: true,
-                        },
-                        {
-                            name: "Ticket Category",
-                            value: categoryChannel
-                                ? categoryChannel.toString()
-                                : "None specified.",
-                            inline: true,
-                        },
-                        {
-                            name: "Closed Category",
-                            value: closedCategoryChannel
-                                ? closedCategoryChannel.toString()
-                                : "None specified.",
-                            inline: true,
-                        },
-                        {
-                            name: "Staff Role",
-                            value: staffRole
-                                ? staffRole.toString()
-                                : "None specified.",
-                            inline: true,
-                        },
-                        {
-                            name: "Max Tickets Per User",
-                            value: maxTicketsPerUser.toString(),
-                            inline: true,
-                        },
-                        {
-                            name: "DM on Close",
-                            value: dmOnClose ? 'Enabled' : 'Disabled',
-                            inline: true,
-                        },
-                        {
-                            name: "Moderator",
-                            value: `${interaction.user.tag} (${interaction.user.id})`,
-                            inline: false,
-                        },
-                    );
-
-
-            } catch (error) {
-                logger.error('Ticket setup error', {
-                    error: error.message,
-                    stack: error.stack,
-                    userId: interaction.user.id,
-                    guildId: interaction.guildId,
-                    commandName: 'ticket_setup'
-                });
-                if (interaction.deferred || interaction.replied) {
-                    await InteractionHelper.safeEditReply(interaction, {
-                        embeds: [
-                            errorEmbed(
-                                "Setup Failed",
-                                "Could not send the ticket panel or save configuration. Check the bot's permissions (especially the ability to send messages in the target channel) and database connection.",
-                            ),
-                        ],
-                    }).catch(err => {
-                        logger.error('Failed to send error reply', {
-                            error: err.message,
-                            guildId: interaction.guildId
-                        });
-                    });
-                } else {
-                    await handleInteractionError(interaction, error, {
-                        commandName: 'ticket_setup',
-                        source: 'ticket_setup_command'
+                if (!guildConfig?.ticketPanelChannelId) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Système non configuré", "Configure d'abord le système de tickets avec `/ticket setup`.")],
                     });
                 }
+
+                const label = interaction.options.getString("label").trim();
+                const ticketButtons = guildConfig.ticketButtons || [{ label: guildConfig.ticketButtonLabel || 'Créer un ticket', emoji: '📩' }];
+
+                if (ticketButtons.length <= 1) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Impossible", "Tu ne peux pas supprimer le dernier bouton. Il doit en rester au moins un.")],
+                    });
+                }
+
+                const index = ticketButtons.findIndex(b => b.label.toLowerCase() === label.toLowerCase());
+                if (index === -1) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed("Bouton introuvable", `Aucun bouton avec le nom **${label}** n'a été trouvé.\n\nBoutons actuels : ${ticketButtons.map(b => `**${b.label}**`).join(', ')}`)],
+                    });
+                }
+
+                ticketButtons.splice(index, 1);
+                guildConfig.ticketButtons = ticketButtons;
+
+                const configKey = getGuildConfigKey(interaction.guildId);
+                await client.db.set(configKey, guildConfig);
+
+                const panelUpdated = await updateLivePanel(client, interaction.guild, guildConfig);
+
+                logger.info(`[Ticket] Bouton supprimé: ${label} par ${interaction.user.tag}`);
+
+                await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [successEmbed(
+                        "✅ Bouton supprimé !",
+                        `Le bouton **${label}** a été supprimé du panel.${panelUpdated ? '\nLe panel a été mis à jour.' : '\n> Le panel n\'a pas pu être mis à jour automatiquement.'}`,
+                    )],
+                });
             }
-        }
+
         } catch (error) {
-            logger.error('Error executing ticket command', {
-                error: error.message,
-                stack: error.stack,
-                userId: interaction.user.id,
-                guildId: interaction.guildId,
-                commandName: 'ticket'
-            });
+            logger.error('Erreur commande ticket:', error);
             await handleInteractionError(interaction, error, {
                 commandName: 'ticket',
                 source: 'ticket_command_main'
@@ -332,5 +273,40 @@ description: panelMessage,
     }
 };
 
+// ─── Mise à jour du panel live ────────────────────────────────────────────────
+async function updateLivePanel(client, guild, config) {
+    if (!config.ticketPanelChannelId) return false;
+    try {
+        const channel = await guild.channels.fetch(config.ticketPanelChannelId).catch(() => null);
+        if (!channel) return false;
 
+        const messages = await channel.messages.fetch({ limit: 50 });
+        const panelMsg = messages.find(m =>
+            m.author.id === client.user.id &&
+            m.components?.length > 0 &&
+            m.components[0]?.components?.[0]?.customId?.startsWith('create_ticket')
+        );
+        if (!panelMsg) return false;
 
+        const updatedEmbed = new (await import('discord.js')).EmbedBuilder()
+            .setTitle('🎫 Tickets Support')
+            .setDescription(config.ticketPanelMessage || 'Clique sur un bouton ci-dessous pour créer un ticket.')
+            .setColor((await import('../../config/bot.js')).getColor('info'));
+
+        const ticketButtons = config.ticketButtons || [{ label: config.ticketButtonLabel || 'Créer un ticket', emoji: '📩' }];
+        const buttons = ticketButtons.map((btn, index) =>
+            new (await import('discord.js')).ButtonBuilder()
+                .setCustomId(`create_ticket_${index}`)
+                .setLabel(btn.label)
+                .setStyle((await import('discord.js')).ButtonStyle.Primary)
+                .setEmoji(btn.emoji || '📩')
+        );
+        const row = new (await import('discord.js')).ActionRowBuilder().addComponents(buttons);
+
+        await panelMsg.edit({ embeds: [updatedEmbed], components: [row] });
+        return true;
+    } catch (error) {
+        logger.warn('Impossible de mettre à jour le panel:', error.message);
+        return false;
+    }
+}
