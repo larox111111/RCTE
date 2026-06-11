@@ -1,7 +1,6 @@
 import { readdir } from 'fs/promises';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import { logger } from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,29 +37,10 @@ export default async (client) => {
                 continue;
               }
 
-              // ── CORRECTION PRINCIPALE ──────────────────────────────────────
-              // On stocke toujours par interaction.name comme clé primaire.
-              // Mais si le handler déclare une méthode match(), on l'enregistre
-              // aussi dans client[type + 'Matchers'] pour le dispatcher.
-              // Cela évite de casser les handlers existants qui font un match
-              // exact, tout en permettant le matching partiel pour create_ticket.
-              // ──────────────────────────────────────────────────────────────
+              // Stockage par name (clé exacte) — comportement original conservé
               client[type].set(interaction.name, interaction);
-
-              if (typeof interaction.match === 'function') {
-                // Liste séparée pour les handlers avec matching custom
-                if (!client[`${type}Matchers`]) {
-                  client[`${type}Matchers`] = [];
-                }
-                client[`${type}Matchers`].push(interaction);
-                logger.info(
-                  `Loaded ${type.slice(0, -1)} (with custom matcher): ${interaction.name}`,
-                );
-              } else {
-                logger.info(`Loaded ${type.slice(0, -1)}: ${interaction.name}`);
-              }
-
               loadedCount += 1;
+              logger.info(`Loaded ${type.slice(0, -1)}: ${interaction.name}`);
             }
           } catch (error) {
             logger.error(`Error loading interaction ${file} in ${type}:`, error);
@@ -81,36 +61,33 @@ export default async (client) => {
   }
 };
 
-// ─── Helper exporté pour le dispatcher ───────────────────────────────────────
-/**
- * Trouve le handler correspondant à un customId dans une Map client[type].
- *
- * Ordre de priorité :
- *  1. handler.match(customId)  → matching custom (ex: create_ticket_2)
- *  2. client[type].get(customId) → matching exact sur le nom
- *  3. Fallback préfixe : cherche un handler dont le name est un préfixe du customId
- *
- * @param {Map} handlerMap       - client.buttons / client.modals / client.selectMenus
- * @param {Array} matchersList   - client.buttonsMatchers / etc. (peut être undefined)
- * @param {string} customId      - le customId sans les args (avant le ":")
- * @returns {Object|null}
- */
-export function findInteractionHandler(handlerMap, matchersList, customId) {
-  // 1. Matchers custom (handlers avec match())
-  if (matchersList?.length) {
-    const matched = matchersList.find(h => h.match(customId));
-    if (matched) return matched;
+// ─── Helper partagé avec interactionCreate.js ─────────────────────────────────
+//
+// Résout le handler pour un customId selon 3 stratégies :
+//   1. handler.match(customId)     — matching custom déclaré sur le handler
+//   2. handlerMap.get(customId)    — matching exact (comportement original)
+//   3. préfixe + '_'               — fallback pour suffixes dynamiques (_0, _1…)
+//
+// Cela permet à create_ticket_0, create_ticket_modal_1, etc. d'être routés
+// vers leur handler sans casser aucun handler existant.
+//
+export function findHandler(handlerMap, customId) {
+  if (!handlerMap) return null;
+
+  // 1. match() custom
+  for (const handler of handlerMap.values()) {
+    if (typeof handler.match === 'function' && handler.match(customId)) {
+      return handler;
+    }
   }
 
   // 2. Exact
-  const exact = handlerMap?.get(customId);
+  const exact = handlerMap.get(customId);
   if (exact) return exact;
 
-  // 3. Préfixe (fallback pour les handlers sans match() mais avec suffixe _N)
-  if (handlerMap) {
-    for (const [name, handler] of handlerMap.entries()) {
-      if (customId.startsWith(name + '_')) return handler;
-    }
+  // 3. Préfixe (ex: "create_ticket_2" → handler nommé "create_ticket")
+  for (const [name, handler] of handlerMap.entries()) {
+    if (customId.startsWith(name + '_')) return handler;
   }
 
   return null;
