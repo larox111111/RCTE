@@ -19,7 +19,12 @@ export default async (client) => {
   try {
     const commandsPath = join(__dirname, '../commands');
     const commandFiles = (await getFiles(commandsPath))
-      .filter(file => file.endsWith('.js') && !file.includes('_') && !file.includes('\\_') && !file.includes('/_'));
+  .filter(file => {
+    if (!file.endsWith('.js')) return false;
+    // Exclure uniquement les fichiers dont le NOM commence par _
+    const fileName = file.split(/[\\/]/).pop();
+    return !fileName.startsWith('_');
+  });
     
     let loadedCount = 0;
 
