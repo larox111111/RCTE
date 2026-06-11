@@ -29,9 +29,7 @@ function buildPanelButtons(ticketButtons) {
     return new ActionRowBuilder().addComponents(buttons);
 }
 
-// ─── Helper : met à jour le panel live ───────────────────────────────────────
-// BUG CORRIGÉ : imports discord.js factorisés (pas de await import() répétés)
-// BUG CORRIGÉ : recherche par startsWith('create_ticket') au lieu de === 'create_ticket'
+// ─── Helper : met à jour le panel live ────────────────────────────────────────
 async function updateLivePanel(client, guild, config) {
     if (!config.ticketPanelChannelId) return false;
     try {
@@ -149,6 +147,12 @@ export default {
                         .setName('emoji')
                         .setDescription('Emoji du bouton (ex: 📋)')
                         .setRequired(false),
+                )
+                .addRoleOption((option) =>
+                    option
+                        .setName('role')
+                        .setDescription('Rôle qui aura accès à ces tickets (laisse vide = rôle staff global)')
+                        .setRequired(false),
                 ),
         )
         .addSubcommand((subcommand) =>
@@ -222,7 +226,7 @@ export default {
                 const maxTicketsPerUser = interaction.options.getInteger('max_tickets') || 3;
                 const dmOnClose = interaction.options.getBoolean('dm_fermeture') !== false;
 
-                const ticketButtons = [{ label: buttonLabel, emoji: '📩' }];
+                const ticketButtons = [{ label: buttonLabel, emoji: '📩', roleId: null }];
 
                 const setupEmbed = createEmbed({
                     title: '🎫 Tickets Support',
@@ -287,8 +291,12 @@ export default {
 
                 const label = interaction.options.getString('label').trim();
                 const emoji = interaction.options.getString('emoji')?.trim() || '📩';
+                // ← AJOUT : récupération du rôle spécifique au bouton
+                const role = interaction.options.getRole('role');
+                const roleId = role?.id || null;
+
                 const ticketButtons = guildConfig.ticketButtons || [
-                    { label: guildConfig.ticketButtonLabel || 'Créer un ticket', emoji: '📩' },
+                    { label: guildConfig.ticketButtonLabel || 'Créer un ticket', emoji: '📩', roleId: null },
                 ];
 
                 if (ticketButtons.length >= 5) {
@@ -313,19 +321,22 @@ export default {
                     });
                 }
 
-                ticketButtons.push({ label, emoji });
+                // ← AJOUT : roleId sauvegardé dans le bouton
+                ticketButtons.push({ label, emoji, roleId });
                 guildConfig.ticketButtons = ticketButtons;
                 await client.db.set(getGuildConfigKey(interaction.guildId), guildConfig);
 
                 const panelUpdated = await updateLivePanel(client, interaction.guild, guildConfig);
 
-                logger.info(`[Ticket] Bouton ajouté: ${label} par ${interaction.user.tag}`);
+                logger.info(`[Ticket] Bouton ajouté: ${label} (role: ${roleId ?? 'staff global'}) par ${interaction.user.tag}`);
 
                 await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
                         successEmbed(
                             '✅ Bouton ajouté !',
                             `Le bouton **${emoji} ${label}** a été ajouté au panel.${
+                                role ? `\n**Rôle associé :** ${role}` : '\n**Rôle :** staff global'
+                            }${
                                 panelUpdated
                                     ? '\nLe panel a été mis à jour.'
                                     : "\n> Le panel n'a pas pu être mis à jour automatiquement."
@@ -352,7 +363,7 @@ export default {
 
                 const label = interaction.options.getString('label').trim();
                 const ticketButtons = guildConfig.ticketButtons || [
-                    { label: guildConfig.ticketButtonLabel || 'Créer un ticket', emoji: '📩' },
+                    { label: guildConfig.ticketButtonLabel || 'Créer un ticket', emoji: '📩', roleId: null },
                 ];
 
                 if (ticketButtons.length <= 1) {
