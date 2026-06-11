@@ -768,6 +768,108 @@ const deleteTicketHandler = {
   },
 };
 
+// ─── TICKET PANEL MESSAGE MODAL ───────────────────────────────────────────────
+
+import { EmbedBuilder as _EmbedBuilder } from 'discord.js';
+import { getGuildConfig as _getGuildConfig } from '../services/guildConfig.js';
+import { getGuildConfigKey as _getGuildConfigKey } from '../utils/database.js';
+import { getColor as _getColor } from '../config/bot.js';
+
+const ticketPanelMessageModalHandler = {
+  name: 'ticket_panel_message_modal',
+
+  async execute(interaction, client) {
+    try {
+      if (!(await ensureGuildContext(interaction))) return;
+
+      // Vérification permission
+      if (!interaction.member.permissions.has(0x10)) { // ManageChannels
+        return await interaction.reply({
+          embeds: [errorEmbed('Permission refusée', "Tu as besoin de la permission `Gérer les salons`.")],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const deferSuccess = await InteractionHelper.safeDefer(interaction, {
+        flags: MessageFlags.Ephemeral,
+      });
+      if (!deferSuccess) return;
+
+      const newMessage = interaction.fields.getTextInputValue('panel_message').trim();
+      if (!newMessage) {
+        return await interaction.editReply({
+          embeds: [errorEmbed('Message vide', 'Le message du panel ne peut pas être vide.')],
+        });
+      }
+
+      const guildConfig = await _getGuildConfig(client, interaction.guildId);
+      if (!guildConfig?.ticketPanelChannelId) {
+        return await interaction.editReply({
+          embeds: [errorEmbed('Système non configuré', "Aucun système de tickets configuré.")],
+        });
+      }
+
+      // Mettre à jour la config
+      guildConfig.ticketPanelMessage = newMessage;
+      await client.db.set(_getGuildConfigKey(interaction.guildId), guildConfig);
+
+      // Mettre à jour le panel live
+      let panelUpdated = false;
+      try {
+        const channel = await interaction.guild.channels.fetch(guildConfig.ticketPanelChannelId).catch(() => null);
+        if (channel) {
+          const messages = await channel.messages.fetch({ limit: 50 });
+          const panelMsg = messages.find(
+            (m) =>
+              m.author.id === client.user.id &&
+              m.components?.length > 0 &&
+              m.components[0]?.components?.[0]?.customId?.startsWith('create_ticket'),
+          );
+          if (panelMsg) {
+            const updatedEmbed = new _EmbedBuilder()
+              .setTitle('🎫 Tickets Support')
+              .setDescription(newMessage)
+              .setColor(_getColor('info'));
+            await panelMsg.edit({ embeds: [updatedEmbed], components: panelMsg.components });
+            panelUpdated = true;
+          }
+        }
+      } catch (updateError) {
+        logger.warn('Impossible de mettre à jour le panel live:', updateError.message);
+      }
+
+      logger.info(`[Ticket] Message panel mis à jour par ${interaction.user.tag}`, {
+        guildId: interaction.guildId,
+      });
+
+      await interaction.editReply({
+        embeds: [
+          successEmbed(
+            '✅ Message mis à jour !',
+            `Le message du panel a été modifié.${
+              panelUpdated
+                ? '\nLe panel a été mis à jour en direct.'
+                : "\n> Le panel n'a pas pu être mis à jour automatiquement."
+            }`,
+          ),
+        ],
+      });
+    } catch (error) {
+      logger.error('Erreur modal message panel ticket:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          embeds: [errorEmbed('Erreur', 'Une erreur est survenue.')],
+          flags: MessageFlags.Ephemeral,
+        });
+      } else if (interaction.deferred) {
+        await interaction.editReply({
+          embeds: [errorEmbed('Erreur', 'Une erreur est survenue.')],
+        });
+      }
+    }
+  },
+};
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 export default createTicketHandler;
@@ -782,4 +884,5 @@ export {
   unclaimTicketHandler,
   reopenTicketHandler,
   deleteTicketHandler,
+  ticketPanelMessageModalHandler,
 };
