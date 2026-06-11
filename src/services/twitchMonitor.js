@@ -90,7 +90,7 @@ export async function startTwitchMonitor(client) {
                         .setTimestamp();
 
                     await notifChannel.send({
-                        content: `🔴 @everyone **${stream.user_name}** est maintenant en live sur Twitch !`,
+                        content: `🔴 **${stream.user_name}** est maintenant en live sur Twitch ! @everyone`,
                         embeds: [embed],
                     });
 
