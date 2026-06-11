@@ -170,6 +170,11 @@ export default {
             subcommand
                 .setName('dashboard')
                 .setDescription('Ouvrir le tableau de bord du système de tickets'),
+        )
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('message')
+                .setDescription('Modifier le message du panel de tickets (supporte sauts de ligne, mentions, markdown)'),
         ),
 
     category: 'ticket',
