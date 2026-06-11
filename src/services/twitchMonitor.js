@@ -77,12 +77,12 @@ export async function startTwitchMonitor(client) {
 
                     const embed = new EmbedBuilder()
                         .setColor('#9146FF')
-                        .setTitle(`🔴 ${stream.user_name} est en live !`)
+                        .setTitle(`🔴 ${stream.user_name} est en live. Rejoignez-le !`)
                         .setURL(`https://www.twitch.tv/${channel}`)
                         .setDescription(`**${stream.title}**`)
                         .addFields(
                             { name: '🎮 Jeu', value: stream.game_name || 'Non renseigné', inline: true },
-                            { name: '👥 Viewers', value: `${stream.viewer_count}`, inline: true },
+                            // { name: '👥 Viewers', value: `${stream.viewer_count}`, inline: true },
                         )
                         .setImage(thumbnailUrl)
                         .setThumbnail(user?.profile_image_url || null)
@@ -90,7 +90,7 @@ export async function startTwitchMonitor(client) {
                         .setTimestamp();
 
                     await notifChannel.send({
-                        content: `🔴 **${stream.user_name}** est maintenant en live sur Twitch ! @everyone`,
+                        content: `@everyone`,
                         embeds: [embed],
                     });
 
